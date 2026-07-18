@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(openglmc
     src/main.cpp
     src/glad.c
-    src/world/render/texture.cpp)
+    src/render/texture.cpp)
 
 target_include_directories(openglmc PRIVATE
     ${CMAKE_SOURCE_DIR}/include

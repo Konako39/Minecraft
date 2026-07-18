@@ -8,14 +8,18 @@
 #include "camera.hpp"
 #include "world/terrain.hpp"
 #include "world/world.hpp"
-#include "world/render/texture.hpp"
+#include "render/texture.hpp"
 #include "player/raycast.hpp"
-
+#include "render/ui.hpp"
+#include "render/outline.hpp"
+#include "player/player.hpp"
 
 
 #include <iostream>
 //把相机先弄出来
 static Camera gCamera;
+static Player gPlayer;//玩家的身体（相机在眼睛里）
+
 float lastX = 640.f, lastY = 360.f;
 bool firstMouse = true;
 
@@ -94,6 +98,16 @@ int main() {
         return 1;
     }
 
+    //UI绘制，方块描边
+    UIRenderer ui;
+    OutlineRenderer outline;
+    if (!ui.init() || !outline.init()) {
+        std::cerr << "UI初始化失败\n";
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
+
 
     World world(2026);
 
@@ -113,41 +127,75 @@ int main() {
         float dt = now - lastTime;
         lastTime = now;
         //一帧经过多久
-        glm::vec3 f = gCamera.front();
-        glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
-        //算我的右边在哪    归一        乘积   前方*上方=右方
 
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            gCamera.position += f * gCamera.speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) 
-            gCamera.position -= f * gCamera.speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) 
-            gCamera.position -= r * gCamera.speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) 
-            gCamera.position += r * gCamera.speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) 
-            gCamera.position.y += gCamera.speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
-            gCamera.position.y -= gCamera.speed * dt;
+
+        glm::vec3 f = gCamera.front();
+        f.y = 0.f;//走路不该被y影响
+        if (glm::length(f) > 0.001f)
+            f = glm::normalize(f);//归一化，出方向
+        glm::vec3 r = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
+        //水平方向的前和右，走路的时候抬头不会朝天上走
+        //这里是正上方 叉乘 方向，同时垂直A和B的向量 就出右边
+
+        //把WASD变为想走的方向，再统一乘速度
+        float speed = gPlayer.flying ? 10.f : 4.3f;
+        glm::vec3 wish(0.f);
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) wish += f;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) wish -= f;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) wish -= r;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) wish += r;
+        if (glm::length(wish) > 0.001f)
+            wish = glm::normalize(wish) * speed;//不归一就经典WD一起按走1.4倍速了
+        gPlayer.vel.x = wish.x;
+        gPlayer.vel.z = wish.z;
+
+        if (gPlayer.flying) {
+            gPlayer.vel.y = 0.f;
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)      
+                gPlayer.vel.y = speed;
+            if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
+                gPlayer.vel.y = -speed;
+        }
+        else {
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && gPlayer.onGround)
+                gPlayer.vel.y = 9.f;//起跳
+        }
+
+        //F键切换飞行 fWas防止一帧读取很多次
+        bool fNow = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
+        static bool fWas = false;
+        if (fNow && !fWas) {
+            gPlayer.flying = !gPlayer.flying;
+            gPlayer.vel.y = 0.f;
+        }
+            fWas = fNow;
+
+        UpdatePlayer(world, gPlayer, dt);//重力 碰撞
+        gCamera.position = gPlayer.eyePos();
+
 
         int fbw, fbh;
         glfwGetFramebufferSize(window, &fbw, &fbh);
         float aspect = fbh ? (float)fbw / (float)fbh : 1.f;
-        world.updateLoadedChunks(gCamera.position, 4);//4个区块半径内自动生成
+        world.updateLoadedChunks(gPlayer.pos, 4);//4个区块半径内自动生成
 
         //开始挖和放的逻辑
         //准星射线
         glm::ivec3 hit{}, prev{};
         bool hitOK = raycast(world, gCamera.position, gCamera.front(), 8.f, hit, prev);
-
         bool left = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         bool right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+       
         //只在按下这一帧的时候触发 记住上一帧的状态，上一帧按下这一帧也按下当作连续了
         static bool wasLeft = false, wasRight = false;//static用在Update里面，循环多少次也是上一次的值
         if (left && !wasLeft && hitOK)
             world.setBlock(hit.x, hit.y, hit.z, Block::Air);
-        if (right && !wasRight && hitOK)
-            world.setBlock(prev.x,prev.y,prev.z,Block::Log);
+        if (right && !wasRight && hitOK){
+            world.setBlock(prev.x,prev.y,prev.z,Block::Stone);
+            if(collides(world,gPlayer.pos))
+                world.setBlock(prev.x, prev.y, prev.z, Block::Air);
+            //如果放自己身体里面了，给他弄成空气
+        }
         wasLeft = left;
         wasRight = right;
 
@@ -181,6 +229,19 @@ int main() {
             c.draw();
 
         }
+        //画瞄准方块时的描边框
+        if (hitOK) {
+            glm::mat4 model = glm::translate(glm::mat4(1.f),glm::vec3(hit));
+            outline.draw(proj*view*model);
+        }
+        //画准心UI
+        ui.begin(fbw,fbh);
+        float cx = fbw * 0.5f, cy = fbh * 0.5f;
+        glm::vec4 crossCol{ 1.f,1.f,1.f,0.8f };
+        ui.rect(cx - 10, cy - 1, 20, 2, crossCol);//横
+        ui.rect(cx - 1, cy - 10, 2, 20, crossCol);//竖
+        ui.end();
+
 
 
         glfwSwapBuffers(window);
