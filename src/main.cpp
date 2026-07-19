@@ -241,7 +241,7 @@ int main() {
             if (left && !wasLeft && hitOK)
                 world.setBlock(hit.x, hit.y, hit.z, Block::Air);
             if (right && !wasRight && hitOK){
-                world.setBlock(prev.x,prev.y,prev.z,Block::Stone);
+                world.setBlock(prev.x,prev.y,prev.z,gHotbar.current());
             if(collides(world,gPlayer.pos))
                 world.setBlock(prev.x, prev.y, prev.z, Block::Air);
             //如果放自己身体里面了，给他弄成空气
@@ -299,8 +299,8 @@ int main() {
             glm::mat4 model = glm::translate(glm::mat4(1.f),glm::vec3(hit));
             outline.draw(proj*view*model);
         }
+
         //画准心UI
-        if(!gInventoryOpen)
         ui.begin(fbw,fbh);
 
         //头在水里的时候有个全屏蓝色的滤镜（画一个蓝色UI矩形 透明度0.35）
@@ -309,13 +309,15 @@ int main() {
             ui.rect(0, 0, (float)fbw, (float)fbh, { 0.2f, 0.4f, 0.9f, 0.35f });
 
         float cx = fbw * 0.5f, cy = fbh * 0.5f;
+        if (!gInventoryOpen){
         glm::vec4 crossCol{ 1.f,1.f,1.f,0.8f };
         ui.rect(cx - 10, cy - 1, 20, 2, crossCol);//横
         ui.rect(cx - 1, cy - 10, 2, 20, crossCol);//竖
+        }
         //准心结束
 
         //画快捷栏
-        const float SLOT = 44.f;//1格子宽度
+        const float SLOT = 120.f;//1格子宽度
         float barX = cx - SLOT * 4.5f,
             barY = fbh - SLOT - 8.f;
         for (int i = 0;i < 9;++i) {
@@ -323,20 +325,69 @@ int main() {
             bool sel = (i == gHotbar.selected);
             //选中格边框亮白，其余半透明黑
             ui.rect(x, barY, SLOT, SLOT, sel ? glm::vec4{ 1,1,1,0.9f } : glm::vec4(0, 0, 0, 0.55f));
-            ui.rect(x + 3, barY + 3, SLOT - 6, SLOT - 6, { 0.15f,0.15f,0.15f,0.85f });//选中外边框
+            ui.rect(x + 10, barY + 10, SLOT - 30, SLOT - 30, { 0.15f,0.15f,0.15f,0.85f });//选中外边框
             //方块图标 face=0那个
             float u0, v0, u1, v1;
             tileUV(tileOf(gHotbar.slots[i], 0), u0, v0, u1, v1);
-            ui.texRect(x + 7, barY + 7, SLOT - 14, SLOT - 14, atlas, u0, v0, u1, v1, { 1,1,1,1 });
+            ui.texRect(x + 7, barY + 7, SLOT - 30, SLOT - 30, atlas, u0, v0, u1, v1, { 1,1,1,1 });
         }
             //手里拿的方块名，显示在快捷栏上方
         {
             std::string name = blockName(gHotbar.current());
-            font.draw(ui,cx - Font::measure(16,name)*0.5f,barY-24,16,name);
+            font.draw(ui,cx - Font::measure(50,name)*0.5f,barY-50,50,name);
         }
 
         //背包
-        //TODO
+        if (gInventoryOpen) {
+            ui.rect(0, 0, (float)fbw, (float)fbh, { 0,0,0,0.5f });//给背景加个暗滤镜
+
+            //鼠标位置：窗口坐标→帧缓冲坐标
+            double mx, my;
+            glfwGetCursorPos(window, &mx, &my);
+            int winW, winH;
+            glfwGetWindowSize(window, &winW, &winH);
+            float mfx = (float)mx * fbw / (winW ? winW : 1);
+            float mfy = (float)my * fbh / (winH ? winH : 1);
+            //转换到窗口帧缓冲坐标 不然窗口是1280x720的 实际上屏幕是2k
+            //不转换就错位
+
+            const auto& items = placeableBlocks();
+            //获得可放置方块
+            const int COLS_INV = 7;
+            const float CELL = 110.f;
+            //每行7格每格110像素
+            int rows = ((int)items.size() + COLS_INV - 1) / COLS_INV;
+            //算出需要多少行 +COLS_INV-1 是向上取整
+            float gx = cx - COLS_INV * CELL * 0.5f;
+            float gy = cy - rows * CELL * 0.5f;
+            //获得背包左上角坐标
+
+            std::string title = "INVENTORY  (click = put in hand)";
+            font.draw(ui, cx - Font::measure(52, title) * 0.5f, gy - 40, 50, title);
+            //画在中间
+
+            for (int i = 0; i < (int)items.size(); ++i) {
+                float x = gx + (i % COLS_INV) * CELL;
+                float y = gy + (i / COLS_INV) * CELL;
+                //遍历每个物品，算出行高
+                bool hover = mfx >= x && mfx < x + CELL && mfy >= y && mfy < y + CELL;
+                //鼠标是否悬停
+
+                ui.rect(x + 2, y + 2, CELL - 4, CELL - 4,
+                    hover ? glm::vec4{ 0.45f,0.45f,0.45f,0.95f } : glm::vec4{ 0.2f,0.2f,0.2f,0.95f });
+                //悬停了格子背景绘制亮灰色否则暗灰色
+                float u0, v0, u1, v1;
+                tileUV(tileOf(items[i], 0), u0, v0, u1, v1);
+                ui.texRect(x + 20, y + 20, CELL - 20, CELL - 20, atlas, u0, v0, u1, v1, { 1,1,1,1 });
+                //绘制方块图标 内边距10 大小-20
+                if (hover) {//悬停显示名字；点击放进手里(当前选中的快捷栏格)
+                    font.draw(ui, cx - Font::measure(40, blockName(items[i])) * 0.5f,
+                        gy + rows * CELL + 25, 40, blockName(items[i]));
+                    if (left && !wasLeft)
+                        gHotbar.slots[gHotbar.selected] = items[i];
+                }
+            }
+        }
 
         //画调试信息
         static float fpsTimer = 0.f;
@@ -355,6 +406,11 @@ int main() {
         font.draw(ui, 8, 8, 64, dbg);
 
         ui.end();
+
+
+        //帧末统一记录鼠标状态（挖放和背包点击都用完了）
+        wasLeft = left;
+        wasRight = right;
 
         glfwSwapBuffers(window);
         glfwPollEvents();
