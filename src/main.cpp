@@ -1,5 +1,6 @@
 ﻿#include <glad/glad.h>   // OpenGL 函数声明
 #include <GLFW/glfw3.h>  // 开窗口、读输入
+#include <cstdio>
 // 数学库：旋转、透视、矩阵
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -13,17 +14,26 @@
 #include "render/ui.hpp"
 #include "render/outline.hpp"
 #include "player/player.hpp"
-
+#include "render/font.hpp"
+#include "player/inventory.hpp"
 
 #include <iostream>
 //把相机先弄出来
 static Camera gCamera;
 static Player gPlayer;//玩家的身体（相机在眼睛里）
+static float gScroll = 0.f;//滚轮攒的量
+static Hotbar gHotbar;//快捷栏
+static bool gInventoryOpen;//开背包了
 
 float lastX = 640.f, lastY = 360.f;
 bool firstMouse = true;
+static void scroll_callback(GLFWwindow*, double, double yoff) {
+    gScroll += (float)yoff;//滑轮后攒着 回调里只做最小的事 具体消费在main里
+}
+
 
 static void mouse_callback(GLFWwindow*,double xops,double yops) {
+    if (gInventoryOpen) return;//背包开着时鼠标是指针，不转视角
     if(firstMouse){
         lastX = (float)xops;
         lastY = (float)yops;
@@ -71,8 +81,12 @@ int main() {
 
     //获取鼠标改yaw和pitch
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    
+
     glfwSetCursorPosCallback(window,mouse_callback);
     //windows窗口，第二个参数是回调函数，鼠标一动就要调用这个 []匿名函数，就地写一个传进去
+    
+    glfwSetScrollCallback(window,scroll_callback);
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
@@ -98,18 +112,19 @@ int main() {
         return 1;
     }
 
-    //UI绘制，方块描边
+    //UI绘制，方块描边,HUD初始化
     UIRenderer ui;
+    Font font;
     OutlineRenderer outline;
-    if (!ui.init() || !outline.init()) {
-        std::cerr << "UI初始化失败\n";
+    if (!ui.init() || !outline.init()||!font.init()) {
+        std::cerr << "UI初始化失败 ui/font/outline\n";
         glfwDestroyWindow(window);
         glfwTerminate();
         return 1;
     }
 
 
-    World world(2026);
+    World world(202851477);
 
     glEnable(GL_DEPTH_TEST);// 开启深度测试：近的挡住远的
 
@@ -149,6 +164,8 @@ int main() {
         gPlayer.vel.x = wish.x;
         gPlayer.vel.z = wish.z;
 
+
+        //飞行和跳跃逻辑
         if (gPlayer.flying) {
             gPlayer.vel.y = 0.f;
             if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)      
@@ -157,8 +174,12 @@ int main() {
                 gPlayer.vel.y = -speed;
         }
         else {
-            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && gPlayer.onGround)
+            if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+                if (inWater(world, gPlayer))
+                    gPlayer.vel.y = 4.f;//踩水上浮
+                else if(gPlayer.onGround)
                 gPlayer.vel.y = 9.f;//起跳
+            }
         }
 
         //F键切换飞行 fWas防止一帧读取很多次
@@ -169,6 +190,34 @@ int main() {
             gPlayer.vel.y = 0.f;
         }
             fWas = fNow;
+
+        //E键开关背包
+         bool eNow = glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS;
+         static bool eWas = false;
+         if (eNow && !eWas) {
+             gInventoryOpen = !gInventoryOpen;
+             glfwSetInputMode(window, GLFW_CURSOR,
+                 gInventoryOpen ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
+                //指针模式
+             if (!gInventoryOpen) firstMouse = true;//回游戏时重置，防视角猛跳
+         }
+         eWas = eNow;
+         //背包开时不走路
+         if (gInventoryOpen) { gPlayer.vel.x = 0.f;gPlayer.vel.z = 0.f; }
+
+         //数字键和滚轮切换快捷栏
+         if (!gInventoryOpen) {
+             for (int i = 0;i < 9;++i)
+                 if (glfwGetKey(window, GLFW_KEY_1 + i) == GLFW_PRESS)
+                     gHotbar.selected = i;
+             int s = (int)gScroll;
+             if (s != 0) {
+                gHotbar.selected= ((gHotbar.selected - s) % 9 + 9) % 9;//负数取模 往下滚选下一格
+                gScroll -= (float)s;
+             }
+         
+         }
+
 
         UpdatePlayer(world, gPlayer, dt);//重力 碰撞
         gCamera.position = gPlayer.eyePos();
@@ -188,17 +237,17 @@ int main() {
        
         //只在按下这一帧的时候触发 记住上一帧的状态，上一帧按下这一帧也按下当作连续了
         static bool wasLeft = false, wasRight = false;//static用在Update里面，循环多少次也是上一次的值
-        if (left && !wasLeft && hitOK)
-            world.setBlock(hit.x, hit.y, hit.z, Block::Air);
-        if (right && !wasRight && hitOK){
-            world.setBlock(prev.x,prev.y,prev.z,Block::Stone);
+        if (!gInventoryOpen) {
+            if (left && !wasLeft && hitOK)
+                world.setBlock(hit.x, hit.y, hit.z, Block::Air);
+            if (right && !wasRight && hitOK){
+                world.setBlock(prev.x,prev.y,prev.z,Block::Stone);
             if(collides(world,gPlayer.pos))
                 world.setBlock(prev.x, prev.y, prev.z, Block::Air);
             //如果放自己身体里面了，给他弄成空气
+            }
         }
-        wasLeft = left;
-        wasRight = right;
-
+       
 
         glm::mat4 view = gCamera.view();
         glm::mat4 proj = glm::perspective(glm::radians(gCamera.fov), aspect, 0.1f, 500.f);
@@ -229,20 +278,83 @@ int main() {
             c.draw();
 
         }
+        //画水 开混合、关深度写入（和深度测试不一样，深度测试是我被挡住了吗，深度写入是画完后我要挡住别人）
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        for (auto& [coord, chunkPtr] : world.chunks) {
+            glm::mat4 model = glm::translate(glm::mat4(1.f),
+                glm::vec3(coord.x, coord.y, coord.z) * (float)Chunk::N);
+            glm::mat4 mvp = proj * view * model;
+            glUniformMatrix4fv(glGetUniformLocation(program, "uMVP"),
+                1, GL_FALSE, glm::value_ptr(mvp));
+            chunkPtr->drawWater();
+        }
+        glDepthMask(GL_TRUE);//谁弄乱谁还原 一直关着写入画区块就完蛋了
+        glDisable(GL_BLEND);
+
+
         //画瞄准方块时的描边框
         if (hitOK) {
             glm::mat4 model = glm::translate(glm::mat4(1.f),glm::vec3(hit));
             outline.draw(proj*view*model);
         }
         //画准心UI
+        if(!gInventoryOpen)
         ui.begin(fbw,fbh);
+
+        //头在水里的时候有个全屏蓝色的滤镜（画一个蓝色UI矩形 透明度0.35）
+        glm::ivec3 eyeCell = glm::ivec3(glm::floor(gCamera.position));
+        if (world.getBlock(eyeCell.x, eyeCell.y, eyeCell.z) == Block::Water)
+            ui.rect(0, 0, (float)fbw, (float)fbh, { 0.2f, 0.4f, 0.9f, 0.35f });
+
         float cx = fbw * 0.5f, cy = fbh * 0.5f;
         glm::vec4 crossCol{ 1.f,1.f,1.f,0.8f };
         ui.rect(cx - 10, cy - 1, 20, 2, crossCol);//横
         ui.rect(cx - 1, cy - 10, 2, 20, crossCol);//竖
+        //准心结束
+
+        //画快捷栏
+        const float SLOT = 44.f;//1格子宽度
+        float barX = cx - SLOT * 4.5f,
+            barY = fbh - SLOT - 8.f;
+        for (int i = 0;i < 9;++i) {
+            float x = barX + i * SLOT;//选中格
+            bool sel = (i == gHotbar.selected);
+            //选中格边框亮白，其余半透明黑
+            ui.rect(x, barY, SLOT, SLOT, sel ? glm::vec4{ 1,1,1,0.9f } : glm::vec4(0, 0, 0, 0.55f));
+            ui.rect(x + 3, barY + 3, SLOT - 6, SLOT - 6, { 0.15f,0.15f,0.15f,0.85f });//选中外边框
+            //方块图标 face=0那个
+            float u0, v0, u1, v1;
+            tileUV(tileOf(gHotbar.slots[i], 0), u0, v0, u1, v1);
+            ui.texRect(x + 7, barY + 7, SLOT - 14, SLOT - 14, atlas, u0, v0, u1, v1, { 1,1,1,1 });
+        }
+            //手里拿的方块名，显示在快捷栏上方
+        {
+            std::string name = blockName(gHotbar.current());
+            font.draw(ui,cx - Font::measure(16,name)*0.5f,barY-24,16,name);
+        }
+
+        //背包
+        //TODO
+
+        //画调试信息
+        static float fpsTimer = 0.f;
+        static int fpsFrames = 0, fpsShow = 0;
+        fpsTimer += dt; fpsFrames++; //0.5s跑了多少帧
+        if (fpsTimer >= 0.5f)//0.5f刷新一次
+        {
+            fpsShow = (int)(fpsFrames / fpsTimer);//1除了变成1秒多少帧
+            fpsTimer = 0.f;
+            fpsFrames = 0;
+        }
+        char dbg[128];
+        snprintf(dbg, sizeof(dbg), "FPS %d XYZ %.1f / %.1f / %.1f%s",
+            fpsShow, gPlayer.pos.x, gPlayer.pos.y, gPlayer.pos.z,
+            gPlayer.flying ? "[FLY]" : "");
+        font.draw(ui, 8, 8, 64, dbg);
+
         ui.end();
-
-
 
         glfwSwapBuffers(window);
         glfwPollEvents();

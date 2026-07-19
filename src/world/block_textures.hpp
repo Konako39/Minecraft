@@ -38,6 +38,14 @@ inline int tileOf(Block b, int face) {
     case Block::Log:
         return (face == 2 || face == 3) ? T_LOG_TOP : T_LOG_SIDE;
     case Block::Leaves: return T_LEAVES;
+    case Block::Sand:return T_SAND;
+    case Block::Water:return T_WATER;
+    case Block::Planks: return T_PLANKS;
+    case Block::Glass:  return T_GLASS;
+    case Block::Cobble: return T_COBBLE;
+    case Block::Bricks: return T_BRICKS;
+    case Block::Snow:   return T_SNOW;
+    case Block::Gravel: return T_GRAVEL;
     default:            return T_STONE;
     }
 }

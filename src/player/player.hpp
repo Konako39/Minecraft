@@ -54,9 +54,20 @@ inline bool moveAxis(const World& world, glm::vec3& pos, int axis, float amout) 
 	//如果remaining的长度 循环完了没有碰撞到 就flase
 }
 
+
+inline bool inWater(const World& world, const Player& p) {
+	glm::ivec3 c = glm::ivec3(glm::floor(p.pos + glm::vec3(0.f, 0.9f, 0.f)));
+	return world.getBlock(c.x, c.y,c.z) == Block::Water;
+}
+
 //重力 把速度积分成唯一，逐轴移动+碰撞
 inline void  UpdatePlayer(const World& world, Player& p, float dt) {
-	if (!p.flying) p.vel.y -= 32.f * dt;//重力加速度 dt时间增量
+	bool swiming = inWater(world, p);
+
+	if (!p.flying) {
+		p.vel.y -= (swiming ? 8.f : 32.f) * dt;//在水里重力变低
+		p.vel.y = std::max(p.vel.y, swiming ? -4.f : -60.f);//水里下沉慢 限制下沉速度最大值
+	}//重力加速度 dt时间增量
 	p.vel.y = std::max(p.vel.y, -60.f); //最大下落速度
 
 	moveAxis(world, p.pos, 0, p.vel.x * dt);//0是数组第一个 就是x

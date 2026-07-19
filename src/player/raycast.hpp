@@ -15,7 +15,7 @@ inline bool raycast(const World& world, glm::vec3 origin, glm::vec3 dir,
 		glm::ivec3 cell((int)std::floor(p.x), (int)std::floor(p.y), (int)std::floor(p.z));
 
 		if (cell == last) continue;
-		if (world.getBlock(cell.x, cell.y, cell.z) != Block::Air) {
+		if (isSolid(world.getBlock(cell.x, cell.y, cell.z))) {
 			hit = cell;
 			prev = last;//命中的前一格
 			return true;

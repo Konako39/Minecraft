@@ -4,6 +4,9 @@
 #include <iostream>
 #include<cstdlib>
 
+static constexpr int SEA_LEVEL = 50;
+//常量 此高度下的空地被水占满
+
 inline int heightAt(const Perlin& noise, int wx, int wz) {
 	//这里noise里装了perm[512]的随机数组
 	//给世界坐标的一列（wx,wz）,返回高度wy
@@ -49,6 +52,7 @@ inline void plantTrees(Chunk& chunk, int coordX, int coordY, int coordZ,
 			if (!isTreeBase(wx, wz, seed)) continue;
 			//打中种树点 这里没命中就下一个
 			int ground = heightAt(noise, wx, wz);//计算出地面高 也就是下面generateTerrain算出来的地形
+			if (ground <= SEA_LEVEL + 1) continue;//不长在沙子和水里
 			int trunkH = 4 + (int)(hash2(wx, wz, seed) >> 8) % 3;//树干高4-6 %3就是出012了 哈希随机高（这个坐标和种子来算）
 			int baseY = ground + 1;
 
@@ -91,13 +95,15 @@ inline void generateTerrain(Chunk& chunk, int coordX, int coordY, int coordZ,
 			int h = heightAt(noise, wx, wz);//随机高度 平滑的
 			//区块坐标改世界坐标，
 			//这个就出来了这一个区块里这个方块的世界坐标了
+			bool beach = (h < SEA_LEVEL + 1); //水边/水下的地表换成沙子
 
 			for (int ly = 0;ly < N;++ly) {
 				int wy = coordY * N + ly;//这一格的世界高度 方块高度是h
 				Block b;
-				if (wy > h)	 b = Block::Air;//刚刚算出来的方块高度，大于他就空气
-				else if (wy == h)	 b = Block::Grass;//等于就是最高的草
-				else if (wy > h - 4)	 b = Block::Dirt;//往下三格就是泥巴
+				if (wy > h)	b=(wy<=SEA_LEVEL)?Block::Water: b = Block::Air;
+				//刚刚算出来的方块高度，地面以上海平面以下就水，不然就空气
+				else if (wy == h)	 b = beach?Block::Sand: Block::Grass;//等于就是最高的草
+				else if (wy > h - 4) b = beach?Block::Sand: Block::Dirt;//往下三格就是泥巴
 				else b = Block::Stone;
 				chunk.set(lx,ly,lz,b);//存进来,这里要区块坐标，但是block应该由世界坐标的y来算
 			}
